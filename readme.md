@@ -1,139 +1,93 @@
-Got you. Here’s a clean, copy-paste walkthrough to deploy the provided Terraform setup on a **fresh Ubuntu (22.04/24.04)** box.
+# Azure HA/DR Reference Architecture – Terraform
+
+This repository contains step-by-step modular Terraform stages to build a complete Highly Available + Disaster Recovery architecture in Azure.
 
 ---
 
-# 1) Update OS and install prerequisites
+## Folder Structure
 
-```bash
-sudo apt-get update -y
-sudo apt-get install -y ca-certificates curl unzip gnupg lsb-release software-properties-common
+```
+/terraform
+  /stage-1  -> creates RGs + VNets + Subnets
+  /stage-2  -> creates Primary Web Tier (LB + 2 VMs in Zones)
+  /stage-3  -> App Tier   (next)
+  /stage-4  -> DB Tier    (next)
+  /stage-5  -> Traffic Manager + DR site (next)
 ```
 
-# 2) Install Azure CLI
+Each stage is separate → independent apply.
+All stages can run individually.
+
+---
+
+## Requirements
+
+| Tech      | version |
+| --------- | ------- |
+| Terraform | v1.6+   |
+| Azure CLI | latest  |
+
+Login:
 
 ```bash
-curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-az version
+az login
 ```
 
-# 3) Install Terraform (HashiCorp repo)
+Make sure correct subscription is default:
 
 ```bash
-curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
-echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] \
-https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
-| sudo tee /etc/apt/sources.list.d/hashicorp.list
-sudo apt-get update -y
-sudo apt-get install -y terraform
-terraform -version
+az account show
 ```
 
-# 4) Grab the project files
+---
 
-If you downloaded the zip to your machine, copy it to the server (e.g., `scp`) and then:
+## Stage-1
 
-```bash
-cd ~
-unzip azure-ha-dr-terraform.zip -d azure-ha-dr-terraform
-cd azure-ha-dr-terraform
-```
-
-# 5) Create (or use) an SSH key for VM access
+Creates **Primary** & **DR** Resource Groups + VNets + Subnets.
 
 ```bash
-# Skip if you already have ~/.ssh/id_rsa.pub
-ssh-keygen -t rsa -b 4096 -C "azureuser" -N "" -f ~/.ssh/id_rsa
-PUBKEY=$(cat ~/.ssh/id_rsa.pub)
-```
-
-# 6) Log in to Azure and select a subscription
-
-```bash
-az login          # Opens a device login URL; follow the prompt
-az account list -o table
-az account set --subscription "<SUBSCRIPTION NAME OR ID>"
-```
-
-# 7) Create your `terraform.tfvars`
-
-```bash
-cat > terraform.tfvars <<'EOF'
-prefix             = "myapp"
-primary_location   = "East US"
-secondary_location = "Central US"
-ssh_public_key     = "<WILL_BE_REPLACED_BY_SCRIPT>"
-# Optional tweaks:
-# web_vmss_capacity = 2
-# app_vmss_capacity = 2
-# vm_sku            = "Standard_B2s"
-# db_vm_size        = "Standard_B2ms"
-EOF
-
-# Inject your actual SSH public key into the file
-sed -i "s#<WILL_BE_REPLACED_BY_SCRIPT>#$PUBKEY#g" terraform.tfvars
-```
-
-# 8) Initialize and preview
-
-```bash
+cd stage-1
 terraform init
-terraform validate
-terraform plan
-```
-
-# 9) Apply (deploy)
-
-```bash
 terraform apply -auto-approve
 ```
 
-Deployment creates:
-
-* Resource groups in **two regions**
-* VNets/subnets (web/app/db)
-* **Public LB** (web) + **Internal LB** (app, port 8080)
-* VM Scale Sets for **WEB** (Nginx) and **APP** (Python HTTP on 8080)
-* Two DB VMs in an availability set per region
-* **Traffic Manager** (priority: primary → secondary)
-
-# 10) Verify it’s working
-
-Terraform prints outputs at the end. Test both region IPs and the global TM endpoint.
+**after apply** get WEB subnet id:
 
 ```bash
-# Show outputs again if needed
-terraform output
-
-# Example checks (replace with your actual values):
-TM=$(terraform output -raw traffic_manager_fqdn)
-PRIMARY=$(terraform output -raw primary_public_ip)
-SECONDARY=$(terraform output -raw secondary_public_ip)
-
-# Web tier (Nginx on 80)
-curl -I http://$PRIMARY
-curl -I http://$SECONDARY
-curl -I http://$TM
+terraform state show azurerm_subnet.primary_web
 ```
 
-You should see HTTP 200/301 headers from Nginx. The Traffic Manager endpoint will point to the **primary** LB unless you simulate failure.
+copy the `id` field
 
-# 11) (Optional) SSH into a VM instance
+---
 
-Scale sets use NAT via the load balancer only for ports you expose; easiest path is to use **Azure Bastion** or add a temporary inbound rule/NAT. For quick testing you can open port 22 from your IP in the VMSS module’s NSG (already allowed to `*` in this starter), then find an instance’s private IP and SSH through a jump host, or add a temporary public IP to a single VM if needed.
+## Stage-2
 
-# 12) Tear down when done
+Creates **Primary Web Tier** using Zones:
+
+* Standard LB (Public)
+* 2 Ubuntu VMs (zone1 + zone2)
+* SSH key auto-generated
+
+Create `terraform.tfvars` inside stage-2 folder:
+
+```tf
+primary_rg_name        = "<value from stage-1 output primary_rg>"
+primary_subnet_web_id  = "<paste the primary_web subnet id>"
+```
+
+then run:
 
 ```bash
-terraform destroy -auto-approve
+cd stage-2
+terraform init
+terraform apply -auto-approve
 ```
 
 ---
 
-## Common gotchas & fixes
+## Next
 
-* **Permissions**: Your Azure account needs permission to create RGs, VNets, LBs, VMSS, VMs, and Traffic Manager.
-* **Unavailable regions**: If your subscription doesn’t support a chosen region/SKU, change `primary_location`, `secondary_location`, or `vm_sku` in `terraform.tfvars`.
-* **Quota limits**: If VM/CPU quota is low, pick smaller SKUs (e.g., `Standard_B1s/B2s`) or request quota increases.
-* **State management** (optional): For teams/CI, use a remote backend (e.g., Azure Storage). I can add an `azurerm` backend block if you want it wired up.
+Ask ChatGPT to generate **stage-3** when ready:
 
-If you want me to: (a) wire in **Azure Site Recovery**, (b) swap the DB tier to **Azure Database** (managed), or (c) lock down NSGs with your office IPs only—say the word and I’ll extend the scripts.
+* App tier (2 VMs zones or 1 VM)
