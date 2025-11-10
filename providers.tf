@@ -14,5 +14,11 @@ terraform {
 }
 
 provider "azurerm" {
-  features {}
+  features {
+    resource_group {
+      prevent_deletion_if_contains_resources = false
+    }
+  }
+  subscription_id = "dd017b8f-e7e9-4fba-b968-afbc7c081049"
 }
+
