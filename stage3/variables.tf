@@ -6,3 +6,8 @@ variable "vm_size" {
   default = "Standard_B1ms"
 }
 
+variable "primary_rg_name" {
+  description = "primary resource group name from stage1"
+  type        = string
+}
+

@@ -8,12 +8,13 @@ resource "random_string" "sfx" {
 
 # Public IP for the Load Balancer
 resource "azurerm_public_ip" "lb_pip" {
-  name                = "pip-${var.project}-web-lb-${random_string.sfx.result}"
+  name                = "pip-ha-dr-lb-${random_string.sfx.result}"
+  location            = data.terraform_remote_state.stage1.outputs.primary_rg_location
   resource_group_name = data.terraform_remote_state.stage1.outputs.primary_rg
-  location            = var.primary_location
   allocation_method   = "Static"
   sku                 = "Standard"
 }
+
 
 # Standard Load Balancer
 resource "azurerm_lb" "web_lb" {

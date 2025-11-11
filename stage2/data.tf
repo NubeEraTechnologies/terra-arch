@@ -2,6 +2,6 @@
 data "terraform_remote_state" "stage1" {
   backend = "local"
   config = {
-    path = "../terraform.tfstate"
+    path = "/home/azureuser/terra-arch-v1/stage1/terraform.tfstate"
   }
 }
